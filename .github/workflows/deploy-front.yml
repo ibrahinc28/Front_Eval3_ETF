@@ -1,7 +1,6 @@
 name: Deploy Frontend to Amazon ECS
 
 # Se dispara al hacer push a main.
-# paths: '**' cubre todo el repositorio (repo individual = un solo servicio).
 on:
   push:
     branches: [main]
