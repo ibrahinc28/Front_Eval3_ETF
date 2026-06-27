@@ -1,0 +1,85 @@
+name: Deploy Frontend to Amazon ECS
+
+# Se dispara al hacer push a main.
+# paths: '**' cubre todo el repositorio (repo individual = un solo servicio).
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**'
+
+env:
+  AWS_REGION:       us-east-1
+  ECR_REPOSITORY:   front-eval3-etf
+  ECS_CLUSTER:      cluster-eval3-etf
+  ECS_SERVICE:      task-front-eval3-etf-service
+  ECS_TASK_DEF:     task-front-eval3-etf
+  CONTAINER_NAME:   front-eval3-etf
+
+jobs:
+  deploy:
+    name: Build, Push & Deploy — Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # ── 2. Autenticación AWS (AWS Academy requiere SESSION_TOKEN) ────────────
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      # ── 3. Login en Amazon ECR ───────────────────────────────────────────────
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── 4. Build y Push de la imagen Docker a ECR ───────────────────────────
+      # Las URLs del backend se inyectan como build-args porque StaticPageGenerator
+      # las hardcodea en el JavaScript generado en tiempo de compilación.
+      - name: Build y Push imagen Docker
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG:    ${{ github.sha }}
+        run: |
+          docker build \
+            --build-arg BACKEND_USERS_URL=${{ secrets.BACKEND_USERS_URL }} \
+            --build-arg BACKEND_PRODUCTS_URL=${{ secrets.BACKEND_PRODUCTS_URL }} \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # ── 5. Descargar la task definition actual desde ECS ─────────────────────
+      - name: Descargar task definition actual
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEF }} \
+            --query taskDefinition \
+            --output json > task-definition.json
+
+      # ── 6. Inyectar la nueva imagen en la task definition ────────────────────
+      - name: Renderizar nueva task definition con la imagen actualizada
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image:           ${{ steps.build-image.outputs.image }}
+
+      # ── 7. Registrar la nueva task definition y forzar el despliegue en ECS ──
+      - name: Desplegar en Amazon ECS (Force New Deployment)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition:        ${{ steps.render-task-def.outputs.task-definition }}
+          service:                ${{ env.ECS_SERVICE }}
+          cluster:                ${{ env.ECS_CLUSTER }}
+          force-new-deployment:   true
+          wait-for-service-stability: true
