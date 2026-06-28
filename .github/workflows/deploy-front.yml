@@ -56,7 +56,7 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # ── 5. Descargar la task definition actual desde ECS ──────────────────
+      # ── 5. Descargar la task definition actual desde ECS ──────────────
       - name: Descargar task definition actual
         run: |
           aws ecs describe-task-definition \
